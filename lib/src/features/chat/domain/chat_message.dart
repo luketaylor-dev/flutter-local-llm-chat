@@ -1,30 +1,16 @@
-enum ChatRole { user, assistant }
-
 class ChatMessage {
-  ChatMessage({
+  const ChatMessage({
     required this.id,
     required this.role,
     required this.content,
     required this.timestamp,
   });
+
   final String id;
   final ChatRole role;
   final String content;
   final DateTime timestamp;
-}
 
-extension ChatRoleAsString on ChatRole {
-  String asOpenAiString() {
-    switch (this) {
-      case ChatRole.user:
-        return 'user';
-      case ChatRole.assistant:
-        return 'assistant';
-    }
-  }
-}
-
-extension ChatMessageMap on ChatMessage {
   Map<String, Object> toMap() {
     return <String, Object>{
       'id': id,
@@ -38,6 +24,8 @@ extension ChatMessageMap on ChatMessage {
     final String roleStr = map['role'] as String? ?? 'user';
     final ChatRole role = roleStr == 'assistant'
         ? ChatRole.assistant
+        : roleStr == 'system'
+        ? ChatRole.system
         : ChatRole.user;
     return ChatMessage(
       id: map['id'] as String? ?? '',
@@ -47,5 +35,20 @@ extension ChatMessageMap on ChatMessage {
           DateTime.tryParse(map['timestamp'] as String? ?? '') ??
           DateTime.now(),
     );
+  }
+}
+
+enum ChatRole { user, assistant, system }
+
+extension ChatRoleAsString on ChatRole {
+  String asOpenAiString() {
+    switch (this) {
+      case ChatRole.user:
+        return 'user';
+      case ChatRole.assistant:
+        return 'assistant';
+      case ChatRole.system:
+        return 'system';
+    }
   }
 }

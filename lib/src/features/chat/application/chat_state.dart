@@ -6,12 +6,14 @@ class ChatState {
     required this.isLoading,
     this.errorMessage,
   });
+
   final List<ChatMessage> messages;
   final bool isLoading;
   final String? errorMessage;
 
-  factory ChatState.initial() =>
-      const ChatState(messages: <ChatMessage>[], isLoading: false);
+  factory ChatState.initial() {
+    return const ChatState(messages: <ChatMessage>[], isLoading: false);
+  }
 
   ChatState copyWith({
     List<ChatMessage>? messages,

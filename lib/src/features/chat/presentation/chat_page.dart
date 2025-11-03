@@ -74,6 +74,11 @@ class _ChatPageState extends ConsumerState<ChatPage> {
               itemCount: state.messages.length,
               itemBuilder: (BuildContext context, int index) {
                 final ChatMessage msg = state.messages[index];
+                // Hide system messages (summaries) from UI
+                // They're still stored and used for context, just not displayed
+                if (msg.role == ChatRole.system) {
+                  return const SizedBox.shrink();
+                }
                 final bool isUser = msg.role == ChatRole.user;
                 return Dismissible(
                   key: ValueKey<String>(msg.id),

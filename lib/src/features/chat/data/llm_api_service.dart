@@ -4,13 +4,28 @@ import 'package:llm_interface/src/features/chat/domain/chat_message.dart';
 class LlmApiService {
   LlmApiService({
     required this.dio,
-    this.baseUrl = 'http://127.0.0.1:8008',
-    this.model,
-  });
+    String baseUrl = 'http://127.0.0.1:8008',
+    String? model,
+  }) : _baseUrl = baseUrl,
+       _model = model;
 
   final Dio dio;
-  final String baseUrl;
-  final String? model;
+  String _baseUrl;
+  String? _model;
+
+  String get baseUrl => _baseUrl;
+  String? get model => _model;
+
+  void updateConfiguration({String? baseUrl, String? model}) {
+    if (baseUrl != null) {
+      _baseUrl = baseUrl;
+    }
+    if (model != null) {
+      _model = model;
+    } else if (model == null && _model != null) {
+      _model = null;
+    }
+  }
 
   Future<String> sendConversation({
     required List<ChatMessage> messages,
@@ -42,8 +57,7 @@ class LlmApiService {
       ),
     );
     if (res.statusCode != null && res.statusCode! >= 400) {
-      final Object body = res.data ?? 'No body';
-      throw Exception('HTTP ${res.statusCode}: $body');
+      throw Exception('HTTP ${res.statusCode}: ${res.data ?? 'No body'}');
     }
     final dynamic data = res.data;
     if (data is Map<String, dynamic>) {
@@ -58,6 +72,6 @@ class LlmApiService {
         }
       }
     }
-    throw Exception('Invalid response from LLM server');
+    throw Exception('Invalid response from LLM server: $data');
   }
 }

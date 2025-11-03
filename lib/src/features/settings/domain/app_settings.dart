@@ -21,21 +21,23 @@ class AppSettings {
   final bool enableStreaming;
   final bool enableSummarization;
 
-  factory AppSettings.defaults() => const AppSettings(
-    serverUrl: 'http://127.0.0.1:8008',
-    model: null,
-    temperature: 0.7,
-    maxTokens: 1014,
-    maxHistoryMessages: 30,
-    maxHistoryChars: 0,
-    keepHeadCount: 3,
-    enableStreaming: false,
-    enableSummarization: false,
-  );
+  factory AppSettings.defaults() {
+    return const AppSettings(
+      serverUrl: 'http://127.0.0.1:8008',
+      model: null,
+      temperature: 0.7,
+      maxTokens: 1014,
+      maxHistoryMessages: 30,
+      maxHistoryChars: 0,
+      keepHeadCount: 3,
+      enableStreaming: false,
+      enableSummarization: false,
+    );
+  }
 
   AppSettings copyWith({
     String? serverUrl,
-    String? model = _sentinelString,
+    String? model,
     double? temperature,
     int? maxTokens,
     int? maxHistoryMessages,
@@ -46,7 +48,7 @@ class AppSettings {
   }) {
     return AppSettings(
       serverUrl: serverUrl ?? this.serverUrl,
-      model: model != _sentinelString ? model : this.model,
+      model: model ?? this.model,
       temperature: temperature ?? this.temperature,
       maxTokens: maxTokens ?? this.maxTokens,
       maxHistoryMessages: maxHistoryMessages ?? this.maxHistoryMessages,
@@ -85,5 +87,3 @@ class AppSettings {
     );
   }
 }
-
-const String _sentinelString = '__SENTINEL__';

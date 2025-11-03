@@ -75,8 +75,8 @@ class SessionsController extends Notifier<List<ChatSession>> {
   }
 
   String _generateId() {
-    final int ts = DateTime.now().millisecondsSinceEpoch;
-    final int rand = Random().nextInt(1 << 32);
-    return '$ts-$rand';
+    final int timestamp = DateTime.now().millisecondsSinceEpoch;
+    final int random = Random().nextInt(1 << 32);
+    return '$timestamp-$random';
   }
 }
