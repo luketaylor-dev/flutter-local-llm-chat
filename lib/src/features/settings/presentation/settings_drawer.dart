@@ -13,6 +13,7 @@ class SettingsDrawer extends ConsumerStatefulWidget {
 class _SettingsDrawerState extends ConsumerState<SettingsDrawer> {
   late final TextEditingController _urlController;
   late final TextEditingController _modelController;
+  late final TextEditingController _maxTokensController;
   double _temperature = 0.7;
   int _maxTokens = 512;
   int _maxHistoryMessages = 30;
@@ -20,6 +21,10 @@ class _SettingsDrawerState extends ConsumerState<SettingsDrawer> {
   int _keepHeadCount = 3;
   bool _enableStreaming = false;
   bool _enableSummarization = false;
+  bool _enableDndMode = false;
+  late final TextEditingController _dndRulesController;
+  bool _showDndBanner = false;
+  bool _showSummaryBanner = false;
 
   @override
   void initState() {
@@ -27,6 +32,7 @@ class _SettingsDrawerState extends ConsumerState<SettingsDrawer> {
     final AppSettings s = ref.read(settingsProvider);
     _urlController = TextEditingController(text: s.serverUrl);
     _modelController = TextEditingController(text: s.model ?? '');
+    _maxTokensController = TextEditingController(text: s.maxTokens.toString());
     _temperature = s.temperature;
     _maxTokens = s.maxTokens;
     _maxHistoryMessages = s.maxHistoryMessages;
@@ -34,12 +40,18 @@ class _SettingsDrawerState extends ConsumerState<SettingsDrawer> {
     _keepHeadCount = s.keepHeadCount;
     _enableStreaming = s.enableStreaming;
     _enableSummarization = s.enableSummarization;
+    _enableDndMode = s.enableDndMode;
+    _dndRulesController = TextEditingController(text: s.dndRules);
+    _showDndBanner = s.showDndBanner;
+    _showSummaryBanner = s.showSummaryBanner;
   }
 
   @override
   void dispose() {
     _urlController.dispose();
     _modelController.dispose();
+    _maxTokensController.dispose();
+    _dndRulesController.dispose();
     super.dispose();
   }
 
@@ -81,11 +93,9 @@ class _SettingsDrawerState extends ConsumerState<SettingsDrawer> {
               1.5,
               (double v) => setState(() => _temperature = v),
             ),
-            _buildStepper(
+            _buildTokenInput(
               'Max tokens',
               _maxTokens,
-              32,
-              8192,
               (int v) => setState(() => _maxTokens = v),
             ),
             _buildStepper(
@@ -119,6 +129,38 @@ class _SettingsDrawerState extends ConsumerState<SettingsDrawer> {
               value: _enableSummarization,
               onChanged: (bool v) => setState(() => _enableSummarization = v),
             ),
+            const Divider(),
+            SwitchListTile(
+              title: const Text('Enable DnD mode (dice & RP rules)'),
+              value: _enableDndMode,
+              onChanged: (bool v) => setState(() => _enableDndMode = v),
+            ),
+            if (_enableDndMode) ...<Widget>[
+              const SizedBox(height: 6),
+              const Text('DnD rules (system prompt)'),
+              const SizedBox(height: 4),
+              TextField(
+                controller: _dndRulesController,
+                minLines: 3,
+                maxLines: 8,
+                decoration: const InputDecoration(
+                  hintText: 'Customize DnD rules for roleplay...',
+                ),
+              ),
+              SwitchListTile(
+                title: const Text('Show DnD rules banner'),
+                subtitle: const Text('Displays rules at the top of chat'),
+                value: _showDndBanner,
+                onChanged: (bool v) => setState(() => _showDndBanner = v),
+              ),
+            ],
+            const SizedBox(height: 12),
+            SwitchListTile(
+              title: const Text('Show summary banner'),
+              subtitle: const Text('Displays summary at the top of chat'),
+              value: _showSummaryBanner,
+              onChanged: (bool v) => setState(() => _showSummaryBanner = v),
+            ),
             const SizedBox(height: 12),
             FilledButton(
               onPressed: () async {
@@ -136,6 +178,12 @@ class _SettingsDrawerState extends ConsumerState<SettingsDrawer> {
                   keepHeadCount: _keepHeadCount,
                   enableStreaming: _enableStreaming,
                   enableSummarization: _enableSummarization,
+                  enableDndMode: _enableDndMode,
+                  dndRules: _dndRulesController.text.trim().isEmpty
+                      ? current.dndRules
+                      : _dndRulesController.text.trim(),
+                  showDndBanner: _showDndBanner,
+                  showSummaryBanner: _showSummaryBanner,
                 );
                 await ref.read(settingsProvider.notifier).update(next);
                 if (context.mounted) Navigator.of(context).pop();
@@ -183,6 +231,72 @@ class _SettingsDrawerState extends ConsumerState<SettingsDrawer> {
           onPressed: value < max ? () => onChanged(value + 1) : null,
         ),
       ],
+    );
+  }
+
+  Widget _buildTokenInput(
+    String label,
+    int value,
+    ValueChanged<int> onChanged,
+  ) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Text('$label: $value'),
+        const SizedBox(height: 4),
+        TextField(
+          controller: _maxTokensController,
+          keyboardType: TextInputType.number,
+          decoration: const InputDecoration(
+            hintText: 'Enter token count (32-8192)',
+            isDense: true,
+            contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          ),
+          onChanged: (String text) {
+            final int? parsed = int.tryParse(text);
+            if (parsed != null && parsed >= 32 && parsed <= 8192) {
+              onChanged(parsed);
+            }
+          },
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 4,
+          children: <Widget>[
+            _buildPresetButton('512', 512, value, onChanged),
+            _buildPresetButton('1024', 1024, value, onChanged),
+            _buildPresetButton('2048', 2048, value, onChanged),
+            _buildPresetButton('4096', 4096, value, onChanged),
+            _buildPresetButton('8192', 8192, value, onChanged),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildPresetButton(
+    String label,
+    int value,
+    int currentValue,
+    ValueChanged<int> onChanged,
+  ) {
+    final bool isSelected = currentValue == value;
+    return OutlinedButton(
+      onPressed: () {
+        _maxTokensController.text = value.toString();
+        onChanged(value);
+      },
+      style: OutlinedButton.styleFrom(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        backgroundColor: isSelected
+            ? Theme.of(context).colorScheme.primaryContainer
+            : null,
+        foregroundColor: isSelected
+            ? Theme.of(context).colorScheme.onPrimaryContainer
+            : null,
+      ),
+      child: Text(label),
     );
   }
 }

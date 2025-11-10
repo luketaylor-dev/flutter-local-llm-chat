@@ -155,6 +155,17 @@ class _HomePageState extends ConsumerState<HomePage> {
                     },
                   ),
                   IconButton(
+                    icon: const Icon(Icons.copy_outlined),
+                    tooltip: 'Duplicate',
+                    onPressed: () async {
+                      final ChatSession duplicated = await ref
+                          .read(sessionsProvider.notifier)
+                          .duplicateSession(s.id);
+                      if (!mounted) return;
+                      _openChat(duplicated);
+                    },
+                  ),
+                  IconButton(
                     icon: const Icon(Icons.delete_outline),
                     color: Theme.of(context).colorScheme.error,
                     tooltip: 'Delete',

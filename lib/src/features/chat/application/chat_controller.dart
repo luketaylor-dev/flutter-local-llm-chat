@@ -40,10 +40,20 @@ class ChatController extends Notifier<ChatState> {
     if (content.trim().isEmpty) {
       return;
     }
+    final AppSettings sPre = ref.read(settingsProvider);
+    // If DnD mode is enabled, ensure rules are inserted and append dice roll to user content
+    if (sPre.enableDndMode) {
+      await _ensureDndRulesInserted(sPre);
+    }
+    String finalContent = content;
+    if (sPre.enableDndMode) {
+      final int roll = Random().nextInt(20) + 1;
+      finalContent = content + '\n\n[dice roll = ' + roll.toString() + ']';
+    }
     final ChatMessage userMessage = ChatMessage(
       id: _generateId(),
       role: ChatRole.user,
-      content: content,
+      content: finalContent,
       timestamp: DateTime.now(),
     );
     final List<ChatMessage> messagesWithUser = <ChatMessage>[
@@ -62,67 +72,96 @@ class ChatController extends Notifier<ChatState> {
       );
       final AppSettings s = ref.read(settingsProvider);
       // Update api baseUrl/model from settings dynamically
+      // ignore: avoid_print
+      print('[LLM][Chat] Using server URL: ${s.serverUrl}');
       final LlmApiService apiService = getIt.get<LlmApiService>();
       apiService.updateConfiguration(baseUrl: s.serverUrl, model: s.model);
-      final String assistantContent = await repository.createChatCompletion(
-        messages: limitedHistory,
-        temperature: s.temperature,
-        maxTokens: s.maxTokens,
+      // ignore: avoid_print
+      print(
+        '[LLM][Chat] API service baseUrl after update: ${apiService.baseUrl}',
       );
-      final ChatMessage assistantMessage = ChatMessage(
-        id: _generateId(),
-        role: ChatRole.assistant,
-        content: assistantContent,
-        timestamp: DateTime.now(),
-      );
-      final List<ChatMessage> updatedMessages = <ChatMessage>[
-        ...state.messages,
-        assistantMessage,
-      ];
-      state = state.copyWith(messages: updatedMessages, isLoading: false);
-      await _persistSession(updatedMessages);
-      // Kick off background summarization if enabled
-      // Smart timing: Only summarize if enough messages accumulated
-      if (s.enableSummarization) {
-        final List<ChatMessage> messagesWithoutSystem = updatedMessages
-            .where((ChatMessage m) => m.role != ChatRole.system)
+      // Debug: log exactly what will be sent to the API (role + content)
+      try {
+        final List<Map<String, String>> debugMsgs = limitedHistory
+            .map(
+              (ChatMessage m) => <String, String>{
+                'role': m.role.name,
+                'content': m.content,
+              },
+            )
             .toList();
-        // Find last summary index in the full list
-        final int lastSummaryIndex = updatedMessages.lastIndexWhere(
-          (ChatMessage m) => m.id == 'system-summary-current',
+        // ignore: avoid_print
+        print('[LLM][Chat] Sending ${debugMsgs.length} messages to API');
+        // ignore: avoid_print
+        print(debugMsgs);
+      } catch (_) {}
+
+      if (s.enableStreaming) {
+        await _handleStreamingResponse(
+          limitedHistory: limitedHistory,
+          settings: s,
         );
-        // Count non-system messages after the summary
-        if (lastSummaryIndex >= 0) {
-          // Get all messages after the summary (including system messages for counting)
-          final List<ChatMessage> allAfterSummary = updatedMessages
-              .skip(lastSummaryIndex + 1)
-              .toList();
-          // Count only non-system messages
-          final int messagesAfterSummary = allAfterSummary
+      } else {
+        final String assistantContent = await repository.createChatCompletion(
+          messages: limitedHistory,
+          temperature: s.temperature,
+          maxTokens: s.maxTokens,
+        );
+        final ChatMessage assistantMessage = ChatMessage(
+          id: _generateId(),
+          role: ChatRole.assistant,
+          content: assistantContent,
+          timestamp: DateTime.now(),
+        );
+        final List<ChatMessage> updatedMessages = <ChatMessage>[
+          ...state.messages,
+          assistantMessage,
+        ];
+        state = state.copyWith(messages: updatedMessages, isLoading: false);
+        await _persistSession(updatedMessages);
+        // Kick off background summarization if enabled
+        // Smart timing: Only summarize if enough messages accumulated
+        if (s.enableSummarization) {
+          final List<ChatMessage> messagesWithoutSystem = updatedMessages
               .where((ChatMessage m) => m.role != ChatRole.system)
-              .length;
-          // Only summarize if we have 8+ messages since last summary
-          // ignore: avoid_print
-          print(
-            '[LLM][summary] Messages since last summary: $messagesAfterSummary (threshold: 8)',
+              .toList();
+          // Find last summary index in the full list
+          final int lastSummaryIndex = updatedMessages.lastIndexWhere(
+            (ChatMessage m) => m.id == 'system-summary-current',
           );
-          if (messagesAfterSummary >= 8) {
-            // ignore: avoid_print
-            print('[LLM][summary] Triggering background summarization...');
-            _summarizeInBackground(updatedMessages);
-          }
-        } else {
-          // No summary yet, summarize if we have enough messages total
-          // ignore: avoid_print
-          print(
-            '[LLM][summary] No existing summary. Total messages: ${messagesWithoutSystem.length} (threshold: 10)',
-          );
-          if (messagesWithoutSystem.length >= 10) {
+          // Count non-system messages after the summary
+          if (lastSummaryIndex >= 0) {
+            // Get all messages after the summary (including system messages for counting)
+            final List<ChatMessage> allAfterSummary = updatedMessages
+                .skip(lastSummaryIndex + 1)
+                .toList();
+            // Count only non-system messages
+            final int messagesAfterSummary = allAfterSummary
+                .where((ChatMessage m) => m.role != ChatRole.system)
+                .length;
+            // Only summarize if we have 8+ messages since last summary
             // ignore: avoid_print
             print(
-              '[LLM][summary] Triggering first background summarization...',
+              '[LLM][summary] Messages since last summary: $messagesAfterSummary (threshold: 8)',
             );
-            _summarizeInBackground(updatedMessages);
+            if (messagesAfterSummary >= 8) {
+              // ignore: avoid_print
+              print('[LLM][summary] Triggering background summarization...');
+              _summarizeInBackground(updatedMessages);
+            }
+          } else {
+            // No summary yet, summarize if we have enough messages total
+            // ignore: avoid_print
+            print(
+              '[LLM][summary] No existing summary. Total messages: ${messagesWithoutSystem.length} (threshold: 10)',
+            );
+            if (messagesWithoutSystem.length >= 10) {
+              // ignore: avoid_print
+              print(
+                '[LLM][summary] Triggering first background summarization...',
+              );
+              _summarizeInBackground(updatedMessages);
+            }
           }
         }
       }
@@ -179,8 +218,16 @@ class ChatController extends Notifier<ChatState> {
   }
 
   List<ChatMessage> _buildHistoryWithSummary(List<ChatMessage> messages) {
-    // Find the summary message by its specific ID (if it exists)
+    // Find system messages (DnD rules and summary) by their IDs (if they exist)
+    ChatMessage? dndMessage;
     ChatMessage? summaryMessage;
+    try {
+      dndMessage = messages.firstWhere(
+        (ChatMessage m) => m.id == 'system-dnd-rules-current',
+      );
+    } catch (_) {
+      dndMessage = null;
+    }
     try {
       summaryMessage = messages.firstWhere(
         (ChatMessage m) => m.id == 'system-summary-current',
@@ -198,8 +245,11 @@ class ChatController extends Notifier<ChatState> {
 
     final List<ChatMessage> trimmed = _limitHistory(messagesWithoutSystem);
 
-    // Build result: summary (if exists) + trimmed messages
+    // Build result: DnD rules (if any) + summary (if any) + trimmed messages
     final List<ChatMessage> result = <ChatMessage>[];
+    if (dndMessage != null) {
+      result.add(dndMessage);
+    }
     if (summaryMessage != null) {
       result.add(summaryMessage);
     }
@@ -276,6 +326,31 @@ class ChatController extends Notifier<ChatState> {
     await _persistSession(updated);
   }
 
+  Future<void> updateMessage({
+    required String messageId,
+    required String newContent,
+  }) async {
+    // Prevent editing of summary messages
+    if (messageId == 'system-summary-current' ||
+        messageId == 'system-dnd-rules-current') {
+      // ignore: avoid_print
+      print('[LLM] Attempted to edit system message - preventing edit');
+      return;
+    }
+    if (newContent.trim().isEmpty) {
+      return;
+    }
+    final List<ChatMessage> updated = <ChatMessage>[
+      for (final ChatMessage m in state.messages)
+        if (m.id == messageId)
+          m.copyWith(content: newContent.trim())
+        else
+          m,
+    ];
+    state = state.copyWith(messages: updated);
+    await _persistSession(updated);
+  }
+
   Future<void> _summarizeInBackground(List<ChatMessage> messages) async {
     // Build a prompt asking the LLM to summarize the important facts and state
     // Filter out system messages before processing (they don't count against limits)
@@ -345,7 +420,7 @@ class ChatController extends Notifier<ChatState> {
 Format your response as a structured summary with these sections:
 
 ## Characters
-- List all characters mentioned, their descriptions, relationships, and current status
+- List all characters mentioned, their descriptions, looks, relationships, and current status
 - Include any new characters introduced
 
 ## World & Locations  
@@ -371,7 +446,7 @@ IMPORTANT:
 Format your response as a structured summary with these sections:
 
 ## Characters
-- List all characters mentioned, their descriptions, relationships, and current status
+- List all characters mentioned, their descriptions, looks, relationships, and current status
 - Note character traits, motivations, and relationships between characters
 
 ## World & Locations
@@ -461,6 +536,115 @@ IMPORTANT:
       // Log background summary errors but don't show to user
       // ignore: avoid_print
       print('[LLM][summary] Error: $e');
+    }
+  }
+
+  Future<void> _ensureDndRulesInserted(AppSettings s) async {
+    final bool exists = state.messages.any(
+      (ChatMessage m) => m.id == 'system-dnd-rules-current',
+    );
+    if (exists) return;
+    final ChatMessage dndRules = ChatMessage(
+      id: 'system-dnd-rules-current',
+      role: ChatRole.system,
+      content: s.dndRules,
+      timestamp: DateTime.now(),
+    );
+    state = state.copyWith(
+      messages: <ChatMessage>[dndRules, ...state.messages],
+    );
+    await _persistSession(state.messages);
+  }
+
+  Future<void> _handleStreamingResponse({
+    required List<ChatMessage> limitedHistory,
+    required AppSettings settings,
+  }) async {
+    final String assistantMessageId = _generateId();
+    final ChatMessage placeholderMessage = ChatMessage(
+      id: assistantMessageId,
+      role: ChatRole.assistant,
+      content: '',
+      timestamp: DateTime.now(),
+    );
+    final List<ChatMessage> messagesWithPlaceholder = <ChatMessage>[
+      ...state.messages,
+      placeholderMessage,
+    ];
+    state = state.copyWith(
+      messages: messagesWithPlaceholder,
+      isLoading: true,
+      streamingContent: '',
+    );
+    String accumulatedContent = '';
+    try {
+      await for (final String chunk in repository.createChatCompletionStream(
+        messages: limitedHistory,
+        temperature: settings.temperature,
+        maxTokens: settings.maxTokens,
+      )) {
+        accumulatedContent += chunk;
+        final List<ChatMessage> updatedMessages = <ChatMessage>[
+          for (final ChatMessage m in state.messages)
+            if (m.id == assistantMessageId)
+              m.copyWith(content: accumulatedContent)
+            else
+              m,
+        ];
+        state = state.copyWith(
+          messages: updatedMessages,
+          streamingContent: accumulatedContent,
+        );
+      }
+      final List<ChatMessage> finalMessages = <ChatMessage>[
+        for (final ChatMessage m in state.messages)
+          if (m.id == assistantMessageId)
+            m.copyWith(content: accumulatedContent)
+          else
+            m,
+      ];
+      state = state.copyWith(
+        messages: finalMessages,
+        isLoading: false,
+        streamingContent: null,
+      );
+      await _persistSession(finalMessages);
+    } catch (e) {
+      final List<ChatMessage> messagesWithoutPlaceholder = <ChatMessage>[
+        for (final ChatMessage m in state.messages)
+          if (m.id != assistantMessageId) m,
+      ];
+      state = state.copyWith(
+        messages: messagesWithoutPlaceholder,
+        isLoading: false,
+        streamingContent: null,
+        errorMessage: 'Error: ${e.toString()}',
+      );
+      return;
+    }
+    final List<ChatMessage> finalMessagesForSummary = state.messages;
+    if (settings.enableSummarization) {
+      final List<ChatMessage> messagesWithoutSystem = finalMessagesForSummary
+          .where((ChatMessage m) => m.role != ChatRole.system)
+          .toList();
+      final int lastSummaryIndex = finalMessagesForSummary.lastIndexWhere(
+        (ChatMessage m) => m.id == 'system-summary-current',
+      );
+      if (lastSummaryIndex >= 0) {
+        final List<ChatMessage> allAfterSummary = finalMessagesForSummary
+            .skip(lastSummaryIndex + 1)
+            .toList();
+        final int messagesAfterSummary = allAfterSummary
+            .where((ChatMessage m) => m.role != ChatRole.system)
+            .length;
+        if (messagesAfterSummary >= 8) {
+          _summarizeInBackground(finalMessagesForSummary);
+        }
+      } else {
+        if (messagesWithoutSystem.length >= 10) {
+          _summarizeInBackground(finalMessagesForSummary);
+        }
+      }
     }
   }
 

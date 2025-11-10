@@ -74,6 +74,27 @@ class SessionsController extends Notifier<List<ChatSession>> {
     await repository.saveSessions(updated);
   }
 
+  Future<ChatSession> duplicateSession(String sessionId) async {
+    final ChatSession original = state.firstWhere(
+      (ChatSession s) => s.id == sessionId,
+      orElse: () => throw Exception('Session not found: $sessionId'),
+    );
+    final String newTitle = original.title.isEmpty
+        ? 'Copy of Chat'
+        : 'Copy of ${original.title}';
+    final ChatSession duplicated = ChatSession(
+      id: _generateId(),
+      title: newTitle,
+      messages: List<ChatMessage>.from(original.messages),
+      createdAt: DateTime.now(),
+      updatedAt: DateTime.now(),
+    );
+    final List<ChatSession> updated = <ChatSession>[duplicated, ...state];
+    state = updated;
+    await repository.saveSessions(updated);
+    return duplicated;
+  }
+
   String _generateId() {
     final int timestamp = DateTime.now().millisecondsSinceEpoch;
     final int random = Random().nextInt(1 << 32);
